@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reaction–Diffusion</title>
+<meta name="description" content="Gray–Scott reaction-diffusion on the GPU: two chemicals, two equations, and the spots, stripes, corals and mitosis patterns they produce. Paint with the mouse.">
+<style>
+  :root{--bg:#070a12;--panel:#10141f;--panel2:#171c2b;--line:#262d40;--text:#e7eaf2;--muted:#8b93a9;--accent:#79b8ff;
+    --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  @media (prefers-color-scheme:light){:root:not([data-theme=dark]){--bg:#f4f6fa;--panel:#fff;--panel2:#eceff5;--line:#d7dce8;--text:#141826;--muted:#5d6579;--accent:#2b6cb0}}
+  *{box-sizing:border-box}html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.4}
+  .app{display:grid;grid-template-rows:auto 1fr auto;height:100%;min-height:520px}
+  header{display:flex;align-items:center;gap:12px;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  .stats{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--muted);display:flex;gap:14px}.stats b{color:var(--text);font-weight:600}
+  .stage{position:relative;background:#03050b;overflow:hidden}canvas{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair}
+  .hud{position:absolute;left:12px;bottom:10px;font-family:var(--mono);font-size:11px;color:#9aa3bb;pointer-events:none;background:rgba(3,5,11,.55);padding:4px 8px;border-radius:6px}
+  .controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel)}
+  .group{display:flex;align-items:center;gap:6px}label{color:var(--muted);font-size:12px;white-space:nowrap}
+  select,button{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 10px;cursor:pointer}
+  button.primary{background:var(--accent);color:#07101c;border-color:transparent;font-weight:600;min-width:72px}button:hover{filter:brightness(1.08)}
+  input[type=range]{accent-color:var(--accent);width:110px}.val{font-family:var(--mono);font-size:12px;min-width:52px}
+  .hint{width:100%;color:var(--muted);font-size:12px}.hint kbd{font-family:var(--mono);background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+  @media (max-width:640px){.stats{width:100%;margin-left:0}input[type=range]{width:80px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header><h1 id="title">Reaction–Diffusion (Gray–Scott)</h1><div class="stats"><span>steps <b id="steps">0</b></span><span id="fps"></span></div></header>
+  <div class="stage"><canvas id="c"></canvas><div class="hud">paint with the mouse to seed chemical B · each frame runs 10 simulation steps</div></div>
+  <div class="controls">
+    <div class="group"><button class="primary" id="play">Pause</button><button id="reset">Reset</button><button id="clear">Clear</button></div>
+    <div class="group"><label for="preset">Pattern</label>
+      <select id="preset">
+        <option value="0.0545,0.062">Coral (f .0545, k .062)</option>
+        <option value="0.0367,0.0649">Mitosis (f .0367, k .0649)</option>
+        <option value="0.030,0.062">Spots (f .030, k .062)</option>
+        <option value="0.025,0.060">Stripes / worms (f .025, k .060)</option>
+        <option value="0.014,0.054">Moving spots (f .014, k .054)</option>
+        <option value="0.078,0.061">Holes (f .078, k .061)</option>
+        <option value="0.022,0.051">Chaos (f .022, k .051)</option>
+        <option value="0.0620,0.0609">Solitons (f .062, k .0609)</option>
+        <option value="custom">Custom (sliders)</option>
+      </select></div>
+    <div class="group"><label for="f">feed f</label><input type="range" id="f" min="0.005" max="0.10" step="0.0005" value="0.0545"><span class="val" id="fval">0.0545</span></div>
+    <div class="group"><label for="k">kill k</label><input type="range" id="k" min="0.040" max="0.075" step="0.0002" value="0.062"><span class="val" id="kval">0.0620</span></div>
+    <div class="group"><label for="palette">Colour</label><select id="palette"><option value="0">Ink</option><option value="1">Thermal</option><option value="2">Ocean</option><option value="3">Mono</option></select></div>
+    <div class="hint">∂A/∂t = D<sub>A</sub>∇²A − AB² + f(1−A) and ∂B/∂t = D<sub>B</sub>∇²B + AB² − (k+f)B, with D<sub>A</sub>=1, D<sub>B</sub>=0.5. <kbd>Space</kbd> pause · <kbd>R</kbd> reseed</div>
+  </div>
+</div>
+<script>
+(() => {
+  const $=id=>document.getElementById(id);
+  const ui={play:$('play'),reset:$('reset'),clear:$('clear'),preset:$('preset'),f:$('f'),k:$('k'),fval:$('fval'),kval:$('kval'),palette:$('palette'),steps:$('steps'),fps:$('fps')};
+  const c=$('c'); const gl=c.getContext('webgl',{preserveDrawingBuffer:false,antialias:false});
+  if(!gl){document.querySelector('.hud').textContent='WebGL is not available in this browser.';return;}
+  const halfFloat=gl.getExtension('OES_texture_half_float'); gl.getExtension('OES_texture_half_float_linear'); const floatTex=gl.getExtension('OES_texture_float');
+  const cbf=gl.getExtension('WEBGL_color_buffer_float'); const cbhf=gl.getExtension('EXT_color_buffer_half_float');
+  // pick a renderable float type
+  function tryType(type){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,4,4,0,gl.RGBA,type,null);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);const fb=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fb);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);const ok=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.deleteFramebuffer(fb);gl.deleteTexture(t);return ok;}
+  let TYPE=null; if(floatTex&&tryType(gl.FLOAT))TYPE=gl.FLOAT; else if(halfFloat&&tryType(halfFloat.HALF_FLOAT_OES))TYPE=halfFloat.HALF_FLOAT_OES; else TYPE=gl.UNSIGNED_BYTE;
+  const quad=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,quad); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  const VS=`attribute vec2 p; varying vec2 uv; void main(){uv=p*0.5+0.5; gl_Position=vec4(p,0.,1.);}`;
+  const SIM=`precision highp float; varying vec2 uv; uniform sampler2D tex; uniform vec2 px; uniform float f,k,dA,dB; uniform vec3 brush; // x,y,radius (radius<=0 = none)
+    void main(){
+      vec2 c=texture2D(tex,uv).xy;
+      vec2 l=texture2D(tex,fract(uv-vec2(px.x,0.))).xy, r=texture2D(tex,fract(uv+vec2(px.x,0.))).xy, u=texture2D(tex,fract(uv+vec2(0.,px.y))).xy, d=texture2D(tex,fract(uv-vec2(0.,px.y))).xy;
+      vec2 ul=texture2D(tex,fract(uv+vec2(-px.x,px.y))).xy, ur=texture2D(tex,fract(uv+px)).xy, dl=texture2D(tex,fract(uv-px)).xy, dr=texture2D(tex,fract(uv+vec2(px.x,-px.y))).xy;
+      vec2 lap=(l+r+u+d)*0.2+(ul+ur+dl+dr)*0.05-c;
+      float A=c.x,B=c.y; float abb=A*B*B;
+      float nA=A+(dA*lap.x-abb+f*(1.-A)); float nB=B+(dB*lap.y+abb-(k+f)*B);
+      if(brush.z>0.0){ float dist=distance(uv/px,brush.xy); if(dist<brush.z){ nB=max(nB,0.9); } }
+      gl_FragColor=vec4(clamp(nA,0.,1.),clamp(nB,0.,1.),0.,1.);
+    }`;
+  const SHOW=`precision highp float; varying vec2 uv; uniform sampler2D tex; uniform int pal;
+    vec3 ink(float v){ return mix(vec3(0.02,0.03,0.07), mix(vec3(0.47,0.72,1.0), vec3(1.0), smoothstep(0.5,1.0,v)), smoothstep(0.0,0.5,v)); }
+    vec3 thermal(float v){ return v<0.5? mix(vec3(0.0,0.0,0.15),vec3(0.9,0.2,0.1),v*2.0) : mix(vec3(0.9,0.2,0.1),vec3(1.0,0.95,0.7),(v-0.5)*2.0); }
+    vec3 ocean(float v){ return mix(vec3(0.0,0.05,0.12), mix(vec3(0.0,0.6,0.7),vec3(0.85,1.0,0.95),smoothstep(0.4,1.0,v)), smoothstep(0.0,0.6,v)); }
+    void main(){ vec2 ab=texture2D(tex,uv).xy; float v=clamp((ab.y)/0.4,0.,1.); vec3 col;
+      if(pal==0) col=ink(v); else if(pal==1) col=thermal(v); else if(pal==2) col=ocean(v); else col=vec3(1.0-v);
+      gl_FragColor=vec4(col,1.); }`;
+  function prog(fs){const p=gl.createProgram(); for(const [t,s] of [[gl.VERTEX_SHADER,VS],[gl.FRAGMENT_SHADER,fs]]){const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh); if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh)); gl.attachShader(p,sh);} gl.linkProgram(p); const loc=gl.getAttribLocation(p,'p'); return {p,loc};}
+  const simP=prog(SIM), showP=prog(SHOW);
+  let W=0,H=0,texA,texB,fbA,fbB,steps=0,running=true,brush={x:-1,y:-1,r:0};
+  function mkTex(){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,H,0,gl.RGBA,TYPE,null);const fb=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fb);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);return [t,fb];}
+  function resize(){const st=c.parentElement; const scale=Math.min(1,900/Math.max(st.clientWidth,1)); W=Math.max(64,Math.floor(st.clientWidth*scale)); H=Math.max(64,Math.floor(st.clientHeight*scale)); c.width=W;c.height=H; [texA,fbA]=mkTex(); [texB,fbB]=mkTex(); seed();}
+  function seed(clear=false){ // A=1 everywhere, B seeded in a few blobs
+    const data=new Float32Array(W*H*4); for(let i=0;i<W*H;i++){data[i*4]=1;}
+    if(!clear){ const blobs=[[W/2,H/2]]; for(let b=0;b<7;b++)blobs.push([Math.random()*W,Math.random()*H]);
+      for(const [bx,by] of blobs){const cx=bx|0,cy=by|0,r=Math.max(6,Math.round(Math.min(W,H)/40)); for(let y=-r;y<=r;y++)for(let x=-r;x<=r;x++){if(x*x+y*y>r*r)continue;const X=(cx+x+W)%W,Y=(cy+y+H)%H;const i=(Y*W+X)*4;data[i]=0.5;data[i+1]=0.25+Math.random()*0.1;}} }
+    const upload=TYPE===gl.FLOAT?data:TYPE===gl.UNSIGNED_BYTE?Uint8Array.from(data,v=>v*255):toHalf(data);
+    for(const t of [texA,texB]){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,H,0,gl.RGBA,TYPE,upload);} steps=0; ui.steps.textContent=0;}
+  function toHalf(f32){const out=new Uint16Array(f32.length); for(let i=0;i<f32.length;i++){const v=f32[i]; out[i]=v>=1?0x3C00:v<=0?0:(()=>{const e=Math.floor(Math.log2(v)); const m=v/Math.pow(2,e)-1; return ((e+15)<<10)|Math.round(m*1024);})();} return out;}
+  function bind(P){gl.useProgram(P.p);gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.enableVertexAttribArray(P.loc);gl.vertexAttribPointer(P.loc,2,gl.FLOAT,false,0,0);}
+  function simStep(){bind(simP); gl.viewport(0,0,W,H);
+    gl.uniform2f(gl.getUniformLocation(simP.p,'px'),1/W,1/H); gl.uniform1f(gl.getUniformLocation(simP.p,'f'),+ui.f.value); gl.uniform1f(gl.getUniformLocation(simP.p,'k'),+ui.k.value);
+    gl.uniform1f(gl.getUniformLocation(simP.p,'dA'),1.0); gl.uniform1f(gl.getUniformLocation(simP.p,'dB'),0.5); gl.uniform3f(gl.getUniformLocation(simP.p,'brush'),brush.x,brush.y,brush.r);
+    for(let i=0;i<10;i++){gl.bindFramebuffer(gl.FRAMEBUFFER,fbB); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texA); gl.uniform1i(gl.getUniformLocation(simP.p,'tex'),0); gl.drawArrays(gl.TRIANGLE_STRIP,0,4); [texA,texB]=[texB,texA];[fbA,fbB]=[fbB,fbA]; if(i===0)gl.uniform3f(gl.getUniformLocation(simP.p,'brush'),-1,-1,0);} steps+=10;}
+  function show(){bind(showP); gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,W,H); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texA); gl.uniform1i(gl.getUniformLocation(showP.p,'tex'),0); gl.uniform1i(gl.getUniformLocation(showP.p,'pal'),+ui.palette.value); gl.drawArrays(gl.TRIANGLE_STRIP,0,4);}
+  let frames=0,fpsT=performance.now();
+  function loop(now){ if(running){simStep(); ui.steps.textContent=steps;} show(); frames++; if(now-fpsT>1000){ui.fps.textContent=frames+' fps';frames=0;fpsT=now;} requestAnimationFrame(loop); }
+  function setBrush(e,on){const r=c.getBoundingClientRect(); brush.x=(e.clientX-r.left)/r.width*W; brush.y=(1-(e.clientY-r.top)/r.height)*H; brush.r=on?Math.max(3,W/80):0;}
+  let painting=false; c.addEventListener('pointerdown',e=>{painting=true;c.setPointerCapture(e.pointerId);setBrush(e,true);}); c.addEventListener('pointermove',e=>{if(painting)setBrush(e,true);}); const stop=()=>{painting=false;brush.r=0;}; c.addEventListener('pointerup',stop);c.addEventListener('pointercancel',stop);
+  ui.preset.addEventListener('change',()=>{if(ui.preset.value==='custom')return; const [f,k]=ui.preset.value.split(','); ui.f.value=f;ui.k.value=k; ui.fval.textContent=(+f).toFixed(4); ui.kval.textContent=(+k).toFixed(4); seed();});
+  ui.f.addEventListener('input',()=>{ui.fval.textContent=(+ui.f.value).toFixed(4); ui.preset.value='custom';}); ui.k.addEventListener('input',()=>{ui.kval.textContent=(+ui.k.value).toFixed(4); ui.preset.value='custom';});
+  ui.play.addEventListener('click',()=>{running=!running;ui.play.textContent=running?'Pause':'Play';}); ui.reset.addEventListener('click',()=>seed()); ui.clear.addEventListener('click',()=>seed(true));
+  window.addEventListener('resize',resize);
+  window.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return; if(e.code==='Space'){e.preventDefault();ui.play.click();} else if(e.key.toLowerCase()==='r')seed();});
+  const q=new URLSearchParams(location.search);
+  if(q.has('f')&&q.has('k')){ui.f.value=+q.get('f');ui.k.value=+q.get('k');ui.preset.value='custom';ui.fval.textContent=(+ui.f.value).toFixed(4);ui.kval.textContent=(+ui.k.value).toFixed(4);}
+  else if(q.has('preset')){const o=[...ui.preset.options].find(o=>o.text.toLowerCase().startsWith(q.get('preset').toLowerCase())); if(o){ui.preset.value=o.value; const [f,k]=o.value.split(','); ui.f.value=f;ui.k.value=k;ui.fval.textContent=(+f).toFixed(4);ui.kval.textContent=(+k).toFixed(4);}}
+  if(q.has('palette'))ui.palette.value=q.get('palette');
+  resize(); requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

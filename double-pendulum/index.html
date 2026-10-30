@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Double Pendulum Chaos</title>
+<meta name="description" content="Two double pendulums launched a hair apart, traced live, with a divergence graph showing sensitive dependence on initial conditions. Drag to set the start.">
+<style>
+  :root{--bg:#070a12;--panel:#10141f;--panel2:#171c2b;--line:#262d40;--text:#e7eaf2;--muted:#8b93a9;--accent:#79b8ff;--a1:#79b8ff;--a2:#ff7b72;--a3:#7ee787;
+    --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  @media (prefers-color-scheme:light){:root:not([data-theme=dark]){--bg:#f4f6fa;--panel:#fff;--panel2:#eceff5;--line:#d7dce8;--text:#141826;--muted:#5d6579;--accent:#2b6cb0}}
+  *{box-sizing:border-box}html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.4}
+  .app{display:grid;grid-template-rows:auto 1fr auto;height:100%;min-height:540px}
+  header{display:flex;align-items:center;gap:12px;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  .stats{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--muted);display:flex;gap:14px;flex-wrap:wrap}.stats b{color:var(--text);font-weight:600}
+  .stage{display:grid;grid-template-columns:1fr minmax(220px,34%);background:#03050b;overflow:hidden}
+  .stage canvas{display:block;width:100%;height:100%}
+  #c{cursor:grab;touch-action:none}
+  .graphwrap{border-left:1px solid var(--line);display:grid;grid-template-rows:auto 1fr auto;min-height:0}
+  .graphwrap .cap{font-family:var(--mono);font-size:11px;color:#9aa3bb;padding:6px 10px}
+  .controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel)}
+  .group{display:flex;align-items:center;gap:6px}label{color:var(--muted);font-size:12px;white-space:nowrap}
+  select,button{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 10px;cursor:pointer}
+  button.primary{background:var(--accent);color:#07101c;border-color:transparent;font-weight:600;min-width:72px}button:hover{filter:brightness(1.08)}
+  select:focus,button:focus,input:focus{outline:2px solid var(--accent);outline-offset:1px}
+  input[type=range]{accent-color:var(--accent);width:110px}.val{font-family:var(--mono);font-size:12px;min-width:52px}
+  .toggle{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:12px;cursor:pointer}.toggle input{accent-color:var(--accent)}
+  .hint{width:100%;color:var(--muted);font-size:12px}.hint kbd{font-family:var(--mono);background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:4px}
+  @media (max-width:700px){.stage{grid-template-columns:1fr;grid-template-rows:1fr 160px}.graphwrap{border-left:0;border-top:1px solid var(--line)}.stats{width:100%;margin-left:0}input[type=range]{width:80px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Double Pendulum Chaos</h1>
+    <div class="stats"><span>t <b id="time">0</b> s</span><span>separation <b id="sep">0</b></span><span>energy drift <b id="edrift">0</b></span><span id="fps"></span></div>
+  </header>
+  <div class="stage">
+    <canvas id="c"></canvas>
+    <div class="graphwrap">
+      <div class="cap">Distance between the two tips (log scale) vs time. A straight rising line is exponential divergence.</div>
+      <canvas id="g"></canvas>
+      <div class="cap"><span class="sw" style="background:var(--a1)"></span>pendulum A <span class="sw" style="background:var(--a2);margin-left:10px"></span>pendulum B (offset by Δθ) <span class="sw" style="background:var(--a3);margin-left:10px"></span>C (−Δθ)</div>
+    </div>
+  </div>
+  <div class="controls">
+    <div class="group"><button class="primary" id="play">Pause</button><button id="reset">Reset</button></div>
+    <div class="group"><label for="preset">Start</label>
+      <select id="preset">
+        <option value="high">High energy (both arms up)</option>
+        <option value="mid">Medium (horizontal)</option>
+        <option value="low">Low energy (small swing, regular)</option>
+        <option value="custom">Custom (drag the bobs while paused)</option>
+      </select></div>
+    <div class="group"><label for="delta">Δθ</label><input type="range" id="delta" min="-6" max="-1" step="0.25" value="-4"><span class="val" id="deltaval">1e-4 rad</span></div>
+    <div class="group"><label for="speed">Speed</label><input type="range" id="speed" min="0.1" max="3" step="0.1" value="1"><span class="val" id="speedval">1.0×</span></div>
+    <div class="group"><label for="ratio">m₂/m₁</label><input type="range" id="ratio" min="0.2" max="3" step="0.1" value="1"><span class="val" id="ratioval">1.0</span></div>
+    <label class="toggle"><input type="checkbox" id="three"> third copy (−Δθ)</label>
+    <label class="toggle"><input type="checkbox" id="trace" checked> trace tips</label>
+    <label class="toggle"><input type="checkbox" id="damp"> air damping</label>
+    <div class="hint">Both arms 1 m, g = 9.81 m/s². Integrated with 4th-order Runge–Kutta at 2,000 steps per second. <kbd>Space</kbd> play/pause · <kbd>R</kbd> reset · drag a bob while paused to set a custom start.</div>
+  </div>
+</div>
+<script>
+(() => {
+  const $=id=>document.getElementById(id);
+  const ui={play:$('play'),reset:$('reset'),preset:$('preset'),delta:$('delta'),deltaval:$('deltaval'),speed:$('speed'),speedval:$('speedval'),ratio:$('ratio'),ratioval:$('ratioval'),
+            three:$('three'),trace:$('trace'),damp:$('damp'),time:$('time'),sep:$('sep'),edrift:$('edrift'),fps:$('fps')};
+  const c=$('c'),ctx=c.getContext('2d'),g=$('g'),gctx=g.getContext('2d');
+  const dpr=Math.max(1,Math.min(2,devicePixelRatio||1));
+  const L1=1,L2=1,G=9.81,H=1/2000; let m1=1,m2=1;
+  const COL=['#79b8ff','#ff7b72','#7ee787'];
+  let pend=[], t=0, running=true, E0=0, graph=[], custom=null, dragging=null;
+
+  // state: [th1, w1, th2, w2]
+  function deriv(s,damp){
+    const [t1,w1,t2,w2]=s; const d=t1-t2; const sd=Math.sin(d), cd=Math.cos(d);
+    const den=2*m1+m2-m2*Math.cos(2*d);
+    const a1=(-G*(2*m1+m2)*Math.sin(t1)-m2*G*Math.sin(t1-2*t2)-2*sd*m2*(w2*w2*L2+w1*w1*L1*cd))/(L1*den);
+    const a2=(2*sd*(w1*w1*L1*(m1+m2)+G*(m1+m2)*Math.cos(t1)+w2*w2*L2*m2*cd))/(L2*den);
+    const k=damp?0.05:0;
+    return [w1,a1-k*w1,w2,a2-k*w2];
+  }
+  function rk4(s,h,damp){
+    const k1=deriv(s,damp), s2=s.map((v,i)=>v+h/2*k1[i]), k2=deriv(s2,damp), s3=s.map((v,i)=>v+h/2*k2[i]), k3=deriv(s3,damp), s4=s.map((v,i)=>v+h*k3[i]), k4=deriv(s4,damp);
+    return s.map((v,i)=>v+h/6*(k1[i]+2*k2[i]+2*k3[i]+k4[i]));
+  }
+  function energy(s){const [t1,w1,t2,w2]=s; const v1=L1*L1*w1*w1; const v2=v1+L2*L2*w2*w2+2*L1*L2*w1*w2*Math.cos(t1-t2);
+    const ke=0.5*m1*v1+0.5*m2*v2; const pe=-(m1+m2)*G*L1*Math.cos(t1)-m2*G*L2*Math.cos(t2); return ke+pe;}
+  function tip(s){const x1=L1*Math.sin(s[0]),y1=L1*Math.cos(s[0]); return [x1+L2*Math.sin(s[2]),y1+L2*Math.cos(s[2]),x1,y1];}
+
+  const STARTS={high:[Math.PI*0.95,0,Math.PI*0.9,0],mid:[Math.PI/2,0,Math.PI/2,0],low:[0.35,0,0.5,0]};
+  function reset(){
+    const base=ui.preset.value==='custom'&&custom?custom.slice():(STARTS[ui.preset.value]||STARTS.high).slice();
+    const dth=Math.pow(10,+ui.delta.value); m2=+ui.ratio.value;
+    pend=[{s:base.slice(),trail:[]},{s:[base[0]+dth,base[1],base[2],base[3]],trail:[]}];
+    if(ui.three.checked) pend.push({s:[base[0]-dth,base[1],base[2],base[3]],trail:[]});
+    t=0; E0=energy(pend[0].s); graph=[]; drawAll(true);
+  }
+  function stepAll(n){for(let i=0;i<n;i++){for(const p of pend)p.s=rk4(p.s,H,ui.damp.checked); t+=H;}
+    if(ui.trace.checked)for(const p of pend){const [x,y]=tip(p.s); p.trail.push(x,y); if(p.trail.length>1600)p.trail.splice(0,2);}
+    const [ax,ay]=tip(pend[0].s),[bx,by]=tip(pend[1].s); const sep=Math.hypot(ax-bx,ay-by); graph.push([t,sep]); if(graph.length>4000)graph.shift();
+    ui.time.textContent=t.toFixed(2); ui.sep.textContent=sep<1e-3?sep.toExponential(1)+' m':sep.toFixed(3)+' m';
+    ui.edrift.textContent=ui.damp.checked?'—':((energy(pend[0].s)-E0)/((m1+m2)*G*(L1+L2))*100).toFixed(4)+'%';}
+
+  // ---------- drawing ----------
+  function resize(){const st=c.parentElement; c.width=c.clientWidth*dpr; c.height=c.clientHeight*dpr; g.width=g.clientWidth*dpr; g.height=g.clientHeight*dpr; drawAll(true);}
+  function geom(){const S=Math.min(c.width,c.height)/(2*(L1+L2)+0.4); return {ox:c.width/2,oy:c.height*0.42,S};}
+  function drawAll(full){
+    const {ox,oy,S}=geom();
+    ctx.fillStyle='#03050b'; ctx.fillRect(0,0,c.width,c.height);
+    pend.forEach((p,i)=>{ if(ui.trace.checked&&p.trail.length>4){ctx.strokeStyle=COL[i];ctx.globalAlpha=0.5;ctx.lineWidth=1*dpr;ctx.beginPath();
+        for(let k=0;k<p.trail.length;k+=2){const X=ox+p.trail[k]*S,Y=oy+p.trail[k+1]*S;k?ctx.lineTo(X,Y):ctx.moveTo(X,Y);} ctx.stroke(); ctx.globalAlpha=1;}});
+    pend.forEach((p,i)=>{const [x2,y2,x1,y1]=tip(p.s); const X1=ox+x1*S,Y1=oy+y1*S,X2=ox+x2*S,Y2=oy+y2*S;
+      ctx.strokeStyle=COL[i];ctx.lineWidth=2.5*dpr;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(ox,oy);ctx.lineTo(X1,Y1);ctx.lineTo(X2,Y2);ctx.stroke();
+      ctx.fillStyle=COL[i]; ctx.beginPath();ctx.arc(X1,Y1,7*dpr*Math.cbrt(m1),0,Math.PI*2);ctx.fill(); ctx.beginPath();ctx.arc(X2,Y2,7*dpr*Math.cbrt(m2),0,Math.PI*2);ctx.fill();});
+    ctx.fillStyle='#9aa3bb';ctx.beginPath();ctx.arc(ox,oy,4*dpr,0,Math.PI*2);ctx.fill();
+    drawGraph();
+  }
+  function drawGraph(){
+    const W=g.width,Hh=g.height; gctx.fillStyle='#03050b'; gctx.fillRect(0,0,W,Hh); if(graph.length<2)return;
+    const pad=28*dpr; const t0=graph[0][0], t1=Math.max(graph[graph.length-1][0],t0+1);
+    const lo=-5, hi=0.5; // log10 range: 1e-5 m .. ~3 m
+    gctx.strokeStyle='#1e2537'; gctx.lineWidth=1; gctx.fillStyle='#6b7390'; gctx.font=`${10*dpr}px ${getComputedStyle(document.body).getPropertyValue('--mono')}`;
+    for(let e=lo;e<=hi;e++){const y=pad+(hi-e)/(hi-lo)*(Hh-2*pad); gctx.beginPath();gctx.moveTo(pad,y);gctx.lineTo(W-6,y);gctx.stroke(); gctx.fillText(e<=0?'1e'+e:'3',2,y+3*dpr);}
+    gctx.strokeStyle='#ff7b72'; gctx.lineWidth=1.5*dpr; gctx.beginPath();
+    for(let i=0;i<graph.length;i++){const [tt,s]=graph[i]; const x=pad+(tt-t0)/(t1-t0)*(W-pad-6); const y=pad+(hi-Math.log10(Math.max(s,1e-6)))/(hi-lo)*(Hh-2*pad); i?gctx.lineTo(x,y):gctx.moveTo(x,y);} gctx.stroke();
+    gctx.fillStyle='#6b7390'; gctx.fillText(t0.toFixed(0)+' s',pad,Hh-6); const lab=t1.toFixed(0)+' s'; gctx.fillText(lab,W-6-gctx.measureText(lab).width,Hh-6);
+  }
+  let frames=0,fpsT=performance.now();
+  function loop(now){ if(running){const n=Math.round((+ui.speed.value)*(1/60)/H); stepAll(Math.max(1,n)); drawAll(false);} frames++; if(now-fpsT>1000){ui.fps.textContent=frames+' fps';frames=0;fpsT=now;} requestAnimationFrame(loop); }
+
+  // ---------- dragging bobs while paused ----------
+  c.addEventListener('pointerdown',e=>{ if(running)return; const {ox,oy,S}=geom(); const r=c.getBoundingClientRect(); const X=(e.clientX-r.left)*dpr,Y=(e.clientY-r.top)*dpr;
+    const [x2,y2,x1,y1]=tip(pend[0].s); const d1=Math.hypot(X-(ox+x1*S),Y-(oy+y1*S)), d2=Math.hypot(X-(ox+x2*S),Y-(oy+y2*S));
+    if(Math.min(d1,d2)<30*dpr){dragging=d1<d2?1:2; c.setPointerCapture(e.pointerId); c.style.cursor='grabbing';}});
+  c.addEventListener('pointermove',e=>{ if(!dragging)return; const {ox,oy,S}=geom(); const r=c.getBoundingClientRect(); const X=(e.clientX-r.left)*dpr,Y=(e.clientY-r.top)*dpr; const s=pend[0].s;
+    if(dragging===1){s[0]=Math.atan2(X-ox,Y-oy);} else {const x1=ox+L1*Math.sin(s[0])*S,y1=oy+L1*Math.cos(s[0])*S; s[2]=Math.atan2(X-x1,Y-y1);} s[1]=0;s[3]=0;
+    custom=s.slice(); ui.preset.value='custom'; reset(); });
+  const endDrag=()=>{dragging=null;c.style.cursor='grab';}; c.addEventListener('pointerup',endDrag); c.addEventListener('pointercancel',endDrag);
+
+  ui.play.addEventListener('click',()=>{running=!running;ui.play.textContent=running?'Pause':'Play';});
+  ui.reset.addEventListener('click',reset); ui.preset.addEventListener('change',reset);
+  ui.delta.addEventListener('input',()=>{ui.deltaval.textContent='1e'+ui.delta.value+' rad';reset();});
+  ui.speed.addEventListener('input',()=>ui.speedval.textContent=(+ui.speed.value).toFixed(1)+'×');
+  ui.ratio.addEventListener('input',()=>{ui.ratioval.textContent=(+ui.ratio.value).toFixed(1);reset();});
+  ui.three.addEventListener('change',reset); ui.trace.addEventListener('change',()=>drawAll(true)); ui.damp.addEventListener('change',reset);
+  window.addEventListener('resize',resize);
+  window.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return; if(e.code==='Space'){e.preventDefault();ui.play.click();} else if(e.key.toLowerCase()==='r')reset();});
+
+  // ?start=high|mid|low&delta=-4&three=1&autoplay=0
+  const q=new URLSearchParams(location.search);
+  if(q.has('start')&&STARTS[q.get('start')])ui.preset.value=q.get('start');
+  if(q.has('delta')){ui.delta.value=Math.max(-6,Math.min(-1,+q.get('delta')||-4)); ui.deltaval.textContent='1e'+ui.delta.value+' rad';}
+  if(q.get('three')==='1')ui.three.checked=true;
+  if(q.get('autoplay')==='0'){running=false;ui.play.textContent='Play';}
+  resize(); reset(); requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

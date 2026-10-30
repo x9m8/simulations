@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flocking</title>
+<meta name="description" content="Boids: thousands of agents following three local rules (separation, alignment, cohesion) produce flocks, with a predator, obstacles and live sliders.">
+<style>
+  :root{--bg:#070a12;--panel:#10141f;--panel2:#171c2b;--line:#262d40;--text:#e7eaf2;--muted:#8b93a9;--accent:#79b8ff;
+    --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  @media (prefers-color-scheme:light){:root:not([data-theme=dark]){--bg:#f4f6fa;--panel:#fff;--panel2:#eceff5;--line:#d7dce8;--text:#141826;--muted:#5d6579;--accent:#2b6cb0}}
+  *{box-sizing:border-box}html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.4}
+  .app{display:grid;grid-template-rows:auto 1fr auto;height:100%;min-height:520px}
+  header{display:flex;align-items:center;gap:12px;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  .stats{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--muted);display:flex;gap:14px}.stats b{color:var(--text);font-weight:600}
+  .stage{position:relative;background:#03050b;overflow:hidden}canvas{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair}
+  .hud{position:absolute;left:12px;bottom:10px;font-family:var(--mono);font-size:11px;color:#9aa3bb;pointer-events:none;background:rgba(3,5,11,.55);padding:4px 8px;border-radius:6px}
+  .controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel)}
+  .group{display:flex;align-items:center;gap:6px}label{color:var(--muted);font-size:12px;white-space:nowrap}
+  select,button{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 10px;cursor:pointer}
+  button.primary{background:var(--accent);color:#07101c;border-color:transparent;font-weight:600;min-width:72px}button:hover{filter:brightness(1.08)}
+  input[type=range]{accent-color:var(--accent);width:100px}.val{font-family:var(--mono);font-size:12px;min-width:36px}
+  .toggle{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:12px;cursor:pointer}.toggle input{accent-color:var(--accent)}
+  .hint{width:100%;color:var(--muted);font-size:12px}.hint kbd{font-family:var(--mono);background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+  @media (max-width:640px){.stats{width:100%;margin-left:0}input[type=range]{width:80px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header><h1>Flocking</h1><div class="stats"><span>boids <b id="nb">0</b></span><span id="fps"></span></div></header>
+  <div class="stage"><canvas id="c"></canvas><div class="hud">click: drop an obstacle · drag: steer the predator · right-click: clear obstacles</div></div>
+  <div class="controls">
+    <div class="group"><button class="primary" id="play">Pause</button><button id="reset">Reset</button></div>
+    <div class="group"><label for="count">Boids</label><input type="range" id="count" min="50" max="4000" step="50" value="1200"><span class="val" id="countval">1200</span></div>
+    <div class="group"><label for="sep">Separation</label><input type="range" id="sep" min="0" max="3" step="0.05" value="1.4"><span class="val" id="sepval">1.4</span></div>
+    <div class="group"><label for="ali">Alignment</label><input type="range" id="ali" min="0" max="3" step="0.05" value="1.0"><span class="val" id="alival">1.0</span></div>
+    <div class="group"><label for="coh">Cohesion</label><input type="range" id="coh" min="0" max="3" step="0.05" value="0.9"><span class="val" id="cohval">0.9</span></div>
+    <div class="group"><label for="radius">Vision</label><input type="range" id="radius" min="10" max="120" step="2" value="48"><span class="val" id="radiusval">48</span></div>
+    <div class="group"><label for="speed">Speed</label><input type="range" id="speed" min="0.5" max="5" step="0.1" value="2.4"><span class="val" id="speedval">2.4</span></div>
+    <label class="toggle"><input type="checkbox" id="predator" checked> predator</label>
+    <label class="toggle"><input type="checkbox" id="trails"> trails</label>
+    <label class="toggle"><input type="checkbox" id="wrap" checked> wrap edges</label>
+    <div class="hint">Reynolds' three rules: steer away from neighbours that are too close, match their average heading, move toward their centre. <kbd>Space</kbd> pause · <kbd>R</kbd> reset</div>
+  </div>
+</div>
+<script>
+(() => {
+  const $=id=>document.getElementById(id);
+  const ui={play:$('play'),reset:$('reset'),count:$('count'),sep:$('sep'),ali:$('ali'),coh:$('coh'),radius:$('radius'),speed:$('speed'),predator:$('predator'),trails:$('trails'),wrap:$('wrap'),nb:$('nb'),fps:$('fps')};
+  for(const k of ['count','sep','ali','coh','radius','speed']) ui[k].addEventListener('input',()=>{$(k+'val').textContent=ui[k].value; if(k==='count') init();});
+  const c=$('c'),ctx=c.getContext('2d'); const dpr=Math.max(1,Math.min(2,devicePixelRatio||1));
+  let W=0,H=0,running=true;
+  let px,py,vx,vy,N=0; let obstacles=[]; let pred={x:0,y:0,vx:1,vy:0,drag:false};
+  function resize(){const st=c.parentElement; W=st.clientWidth; H=st.clientHeight; c.width=W*dpr; c.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);}
+  function init(){N=+ui.count.value; px=new Float32Array(N);py=new Float32Array(N);vx=new Float32Array(N);vy=new Float32Array(N);
+    for(let i=0;i<N;i++){px[i]=Math.random()*W;py[i]=Math.random()*H;const a=Math.random()*Math.PI*2;vx[i]=Math.cos(a);vy[i]=Math.sin(a);} pred.x=W/2;pred.y=H/2; ui.nb.textContent=N; ctx.fillStyle='#03050b';ctx.fillRect(0,0,W,H);}
+  // spatial hash
+  let cell=48, cols=0, rows=0, heads, next;
+  function buildGrid(){cell=Math.max(16,+ui.radius.value); cols=Math.ceil(W/cell)+1; rows=Math.ceil(H/cell)+1;
+    if(!heads||heads.length!==cols*rows) heads=new Int32Array(cols*rows); heads.fill(-1); if(!next||next.length!==N) next=new Int32Array(N);
+    for(let i=0;i<N;i++){const cx=Math.min(cols-1,Math.max(0,(px[i]/cell)|0)),cy=Math.min(rows-1,Math.max(0,(py[i]/cell)|0)); const h=cy*cols+cx; next[i]=heads[h]; heads[h]=i;}}
+  function step(){
+    const R=+ui.radius.value, R2=R*R, sepR2=(R*0.45)*(R*0.45); const wS=+ui.sep.value*0.08, wA=+ui.ali.value*0.05, wC=+ui.coh.value*0.0025; const maxV=+ui.speed.value; const wrap=ui.wrap.checked; const usePred=ui.predator.checked;
+    buildGrid();
+    const nvx=new Float32Array(N), nvy=new Float32Array(N);
+    for(let i=0;i<N;i++){
+      let sx=0,sy=0,ax=0,ay=0,cx=0,cy=0,n=0; const x=px[i],y=py[i];
+      const gx=(x/cell)|0, gy=(y/cell)|0;
+      for(let oy=-1;oy<=1;oy++)for(let ox=-1;ox<=1;ox++){let cxx=gx+ox,cyy=gy+oy; if(wrap){cxx=(cxx+cols)%cols;cyy=(cyy+rows)%rows;} else if(cxx<0||cyy<0||cxx>=cols||cyy>=rows) continue;
+        for(let j=heads[cyy*cols+cxx];j!==-1;j=next[j]){ if(j===i)continue; let dx=px[j]-x, dy=py[j]-y; if(wrap){if(dx>W/2)dx-=W;else if(dx<-W/2)dx+=W; if(dy>H/2)dy-=H;else if(dy<-H/2)dy+=H;}
+          const d2=dx*dx+dy*dy; if(d2>R2||d2===0)continue; n++; ax+=vx[j];ay+=vy[j]; cx+=dx;cy+=dy; if(d2<sepR2){const inv=1/d2; sx-=dx*inv; sy-=dy*inv;} }}
+      let fx=0,fy=0;
+      if(n){ fx+=sx*wS*R; fy+=sy*wS*R; ax/=n;ay/=n; fx+=(ax-vx[i])*wA; fy+=(ay-vy[i])*wA; fx+=cx/n*wC; fy+=cy/n*wC; }
+      for(const o of obstacles){let dx=x-o.x,dy=y-o.y; const d2=dx*dx+dy*dy; const rr=o.r+R*0.6; if(d2<rr*rr){const d=Math.sqrt(d2)+1e-6; const k=(rr-d)/rr; fx+=dx/d*k*0.6; fy+=dy/d*k*0.6;}}
+      if(usePred){let dx=x-pred.x,dy=y-pred.y; const d2=dx*dx+dy*dy; const rr=R*2.2; if(d2<rr*rr){const d=Math.sqrt(d2)+1e-6; const k=(rr-d)/rr; fx+=dx/d*k*1.2; fy+=dy/d*k*1.2;}}
+      if(!wrap){const m=40; if(x<m)fx+=(m-x)*0.01; if(x>W-m)fx-=(x-W+m)*0.01; if(y<m)fy+=(m-y)*0.01; if(y>H-m)fy-=(y-H+m)*0.01;}
+      let nx=vx[i]+fx, ny=vy[i]+fy; const sp=Math.hypot(nx,ny)||1; const want=Math.min(maxV,Math.max(maxV*0.5,sp)); nvx[i]=nx/sp*want; nvy[i]=ny/sp*want;
+    }
+    for(let i=0;i<N;i++){vx[i]=nvx[i];vy[i]=nvy[i]; px[i]+=vx[i]; py[i]+=vy[i]; if(wrap){if(px[i]<0)px[i]+=W;else if(px[i]>=W)px[i]-=W; if(py[i]<0)py[i]+=H;else if(py[i]>=H)py[i]-=H;} else {px[i]=Math.min(W-1,Math.max(0,px[i]));py[i]=Math.min(H-1,Math.max(0,py[i]));}}
+    if(usePred&&!pred.drag){ // predator chases the local centre of mass
+      let bx=0,by=0,bn=0; for(let i=0;i<N;i+=7){const dx=px[i]-pred.x,dy=py[i]-pred.y; if(dx*dx+dy*dy<160*160){bx+=dx;by+=dy;bn++;}}
+      if(bn){const d=Math.hypot(bx,by)||1; pred.vx+= bx/d*0.08; pred.vy+=by/d*0.08;} else {pred.vx+=(Math.random()-.5)*0.2;pred.vy+=(Math.random()-.5)*0.2;}
+      const s=Math.hypot(pred.vx,pred.vy)||1; const ps=maxV*0.85; pred.vx=pred.vx/s*ps; pred.vy=pred.vy/s*ps; pred.x+=pred.vx; pred.y+=pred.vy; if(pred.x<0)pred.x+=W;if(pred.x>=W)pred.x-=W;if(pred.y<0)pred.y+=H;if(pred.y>=H)pred.y-=H;}
+  }
+  function draw(){
+    ctx.fillStyle=ui.trails.checked?'rgba(3,5,11,0.22)':'#03050b'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#223049'; for(const o of obstacles){ctx.beginPath();ctx.arc(o.x,o.y,o.r,0,Math.PI*2);ctx.fill();}
+    ctx.fillStyle='#79b8ff';
+    for(let i=0;i<N;i++){const x=px[i],y=py[i],dx=vx[i],dy=vy[i]; const s=Math.hypot(dx,dy)||1; const ux=dx/s*5,uy=dy/s*5; ctx.beginPath(); ctx.moveTo(x+ux,y+uy); ctx.lineTo(x-ux*0.6-uy*0.5,y-uy*0.6+ux*0.5); ctx.lineTo(x-ux*0.6+uy*0.5,y-uy*0.6-ux*0.5); ctx.fill();}
+    if(ui.predator.checked){ctx.fillStyle='#ff7b72'; const s=Math.hypot(pred.vx,pred.vy)||1; const ux=pred.vx/s*11,uy=pred.vy/s*11; ctx.beginPath(); ctx.moveTo(pred.x+ux,pred.y+uy); ctx.lineTo(pred.x-ux*0.7-uy*0.6,pred.y-uy*0.7+ux*0.6); ctx.lineTo(pred.x-ux*0.7+uy*0.6,pred.y-uy*0.7-ux*0.6); ctx.fill();}
+  }
+  let frames=0,fpsT=performance.now();
+  function loop(now){ if(running){step();draw();} frames++; if(now-fpsT>1000){ui.fps.textContent=frames+' fps';frames=0;fpsT=now;} requestAnimationFrame(loop); }
+  c.addEventListener('contextmenu',e=>{e.preventDefault(); obstacles=[];});
+  c.addEventListener('pointerdown',e=>{if(e.button===2)return; const r=c.getBoundingClientRect(); const x=e.clientX-r.left,y=e.clientY-r.top;
+    if(ui.predator.checked&&Math.hypot(x-pred.x,y-pred.y)<30){pred.drag=true;c.setPointerCapture(e.pointerId);return;} obstacles.push({x,y,r:18+Math.random()*22}); if(obstacles.length>30)obstacles.shift();});
+  c.addEventListener('pointermove',e=>{if(!pred.drag)return; const r=c.getBoundingClientRect(); const x=e.clientX-r.left,y=e.clientY-r.top; pred.vx=x-pred.x;pred.vy=y-pred.y; pred.x=x;pred.y=y;});
+  c.addEventListener('pointerup',()=>pred.drag=false);
+  ui.play.addEventListener('click',()=>{running=!running;ui.play.textContent=running?'Pause':'Play';});
+  ui.reset.addEventListener('click',()=>{obstacles=[];init();});
+  window.addEventListener('resize',()=>{resize();init();});
+  window.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return; if(e.code==='Space'){e.preventDefault();ui.play.click();} else if(e.key.toLowerCase()==='r')ui.reset.click();});
+  const q=new URLSearchParams(location.search);
+  if(q.has('n')){ui.count.value=Math.max(50,Math.min(4000,+q.get('n')||1200)); $('countval').textContent=ui.count.value;}
+  if(q.get('predator')==='0')ui.predator.checked=false; if(q.get('trails')==='1')ui.trails.checked=true;
+  resize(); init(); requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

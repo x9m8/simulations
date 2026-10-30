@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cellular Automata Lab</title>
+<meta name="description" content="Interactive cellular automata: Conway's Game of Life, HighLife, Day & Night, Seeds, Brian's Brain and the 256 elementary one-dimensional rules.">
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1f2430;
+    --line: #2a3140;
+    --text: #e6e9ef;
+    --muted: #8b93a7;
+    --accent: #5ad1b0;
+    --accent-2: #f2b84b;
+    --cell: #5ad1b0;
+    --cell-dying: #f2b84b;
+    --grid: #1a1e27;
+    --radius: 10px;
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f6f7f9; --panel: #ffffff; --panel-2: #eef1f5; --line: #d9dee7;
+      --text: #161a22; --muted: #5f6879; --cell: #1f8f72; --cell-dying: #d9931c; --grid: #e8ebf0;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.4; }
+  .app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; min-height: 520px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header .stats { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--muted); display: flex; gap: 14px; }
+  header .stats b { color: var(--text); font-weight: 600; }
+  .stage { position: relative; background: var(--grid); overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; cursor: crosshair; touch-action: none; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line); background: var(--panel); }
+  .group { display: flex; align-items: center; gap: 6px; }
+  label { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  select, button, input[type="number"] {
+    font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 10px; cursor: pointer;
+  }
+  select:focus, button:focus, input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.primary { background: var(--accent); color: #0b0f0e; border-color: transparent; font-weight: 600; min-width: 72px; }
+  button:hover { filter: brightness(1.08); }
+  input[type="range"] { accent-color: var(--accent); width: 110px; }
+  input[type="number"] { width: 64px; font-family: var(--mono); }
+  .toggle { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; cursor: pointer; }
+  .toggle input { accent-color: var(--accent); }
+  .hint { width: 100%; color: var(--muted); font-size: 12px; }
+  .hint kbd { font-family: var(--mono); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+  .rulebits { display: none; align-items: center; gap: 2px; margin-left: 4px; }
+  .rulebits.show { display: flex; }
+  .bit { width: 22px; height: 22px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-2); font-family: var(--mono); font-size: 11px; display: grid; place-items: center; cursor: pointer; user-select: none; }
+  .bit.on { background: var(--accent); color: #0b0f0e; border-color: transparent; }
+  @media (max-width: 640px) {
+    header .stats { width: 100%; margin-left: 0; }
+    input[type="range"] { width: 80px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1 id="title">Cellular Automata Lab</h1>
+    <div class="stats">
+      <span>gen <b id="gen">0</b></span>
+      <span>alive <b id="pop">0</b></span>
+      <span id="fps"></span>
+    </div>
+  </header>
+
+  <div class="stage"><canvas id="c"></canvas></div>
+
+  <div class="controls">
+    <div class="group">
+      <button class="primary" id="play">Play</button>
+      <button id="step" title="Advance one generation">Step</button>
+      <button id="clear">Clear</button>
+      <button id="random">Random</button>
+    </div>
+
+    <div class="group">
+      <label for="rule">Rule</label>
+      <select id="rule">
+        <optgroup label="Two-dimensional">
+          <option value="life">Conway's Life (B3/S23)</option>
+          <option value="highlife">HighLife (B36/S23)</option>
+          <option value="daynight">Day &amp; Night (B3678/S34678)</option>
+          <option value="seeds">Seeds (B2/S)</option>
+          <option value="brain">Brian's Brain (3-state)</option>
+          <option value="maze">Maze (B3/S12345)</option>
+        </optgroup>
+        <optgroup label="One-dimensional (elementary)">
+          <option value="elem">Elementary rule…</option>
+        </optgroup>
+      </select>
+      <div class="group" id="elemGroup" style="display:none">
+        <label for="ruleNum">#</label>
+        <input type="number" id="ruleNum" min="0" max="255" value="30">
+        <div class="rulebits" id="rulebits"></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <label for="preset">Pattern</label>
+      <select id="preset">
+        <option value="">—</option>
+        <option value="glider">Glider</option>
+        <option value="rpent">R-pentomino</option>
+        <option value="pulsar">Pulsar</option>
+        <option value="gun">Gosper glider gun</option>
+        <option value="acorn">Acorn</option>
+        <option value="diehard">Diehard</option>
+        <option value="center">Single cell (centre)</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <label for="speed">Speed</label>
+      <input type="range" id="speed" min="1" max="60" value="15">
+    </div>
+
+    <div class="group">
+      <label for="size">Cell</label>
+      <input type="range" id="size" min="2" max="16" value="6">
+    </div>
+
+    <label class="toggle"><input type="checkbox" id="wrap" checked> wrap edges</label>
+    <label class="toggle"><input type="checkbox" id="trails"> trails</label>
+
+    <div class="hint">Draw with the mouse or finger. <kbd>Space</kbd> play/pause · <kbd>→</kbd> step · <kbd>R</kbd> random · <kbd>C</kbd> clear</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ---------- rule definitions ----------
+  // 2D rules are "B/S" birth/survival sets over Moore neighbourhoods.
+  const RULES2D = {
+    life:     { b: [3],       s: [2,3] },
+    highlife: { b: [3,6],     s: [2,3] },
+    daynight: { b: [3,6,7,8], s: [3,4,6,7,8] },
+    seeds:    { b: [2],       s: [] },
+    maze:     { b: [3],       s: [1,2,3,4,5] },
+    brain:    null // handled specially: 0 dead, 1 alive, 2 dying
+  };
+
+  const PRESETS = {
+    glider: ["010","001","111"],
+    rpent:  ["011","110","010"],
+    acorn:  ["0100000","0001000","1100111"],
+    diehard:["00000010","11000000","01000111"],
+    pulsar: [
+      "0011100011100",
+      "0000000000000",
+      "1000010100001",
+      "1000010100001",
+      "1000010100001",
+      "0011100011100",
+      "0000000000000",
+      "0011100011100",
+      "1000010100001",
+      "1000010100001",
+      "1000010100001",
+      "0000000000000",
+      "0011100011100"],
+    gun: [
+      "000000000000000000000000100000000000",
+      "000000000000000000000010100000000000",
+      "000000000000110000001100000000000011",
+      "000000000001000100001100000000000011",
+      "110000000010000010001100000000000000",
+      "110000000010001011000010100000000000",
+      "000000000010000010000000100000000000",
+      "000000000001000100000000000000000000",
+      "000000000000110000000000000000000000"],
+    center: ["1"]
+  };
+
+  // ---------- state ----------
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const $ = id => document.getElementById(id);
+  const ui = {
+    play: $('play'), step: $('step'), clear: $('clear'), random: $('random'),
+    rule: $('rule'), ruleNum: $('ruleNum'), elemGroup: $('elemGroup'), rulebits: $('rulebits'),
+    preset: $('preset'), speed: $('speed'), size: $('size'), wrap: $('wrap'), trails: $('trails'),
+    gen: $('gen'), pop: $('pop'), fps: $('fps'), title: $('title')
+  };
+
+  let cols = 0, rows = 0, cell = +ui.size.value;
+  let grid, next, age;          // Uint8Array cell states; age for trails
+  let running = false, generation = 0, population = 0;
+  let elemRow = 0;              // current row for 1D automata
+  let dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  let acc = 0, last = 0, frames = 0, fpsT = 0;
+
+  const css = () => getComputedStyle(document.documentElement);
+  let colors = {};
+  function readColors() {
+    const s = css();
+    colors = {
+      bg: s.getPropertyValue('--grid').trim(),
+      cell: s.getPropertyValue('--cell').trim(),
+      dying: s.getPropertyValue('--cell-dying').trim()
+    };
+  }
+  readColors();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); draw(); });
+
+  // ---------- grid sizing ----------
+  function resize(keep = true) {
+    const stage = canvas.parentElement;
+    const w = stage.clientWidth, h = stage.clientHeight;
+    canvas.width = Math.floor(w * dpr); canvas.height = Math.floor(h * dpr);
+    const nc = Math.max(8, Math.floor(w / cell)), nr = Math.max(8, Math.floor(h / cell));
+    if (nc === cols && nr === rows && grid) { draw(); return; }
+    const ng = new Uint8Array(nc * nr), na = new Uint8Array(nc * nr);
+    if (keep && grid) {
+      const ox = Math.floor((nc - cols) / 2), oy = Math.floor((nr - rows) / 2);
+      for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+        const tx = x + ox, ty = y + oy;
+        if (tx >= 0 && ty >= 0 && tx < nc && ty < nr) { ng[ty * nc + tx] = grid[y * cols + x]; na[ty * nc + tx] = age[y * cols + x]; }
+      }
+    }
+    cols = nc; rows = nr; grid = ng; age = na; next = new Uint8Array(cols * rows);
+    elemRow = Math.min(elemRow, rows - 1);
+    draw();
+  }
+
+  // ---------- stepping ----------
+  function stepMoore() {
+    const r = RULES2D[ui.rule.value];
+    const wrap = ui.wrap.checked;
+    const bMask = r.b.reduce((m, n) => m | (1 << n), 0);
+    const sMask = r.s.reduce((m, n) => m | (1 << n), 0);
+    let pop = 0;
+    for (let y = 0; y < rows; y++) {
+      const yu = y === 0 ? (wrap ? rows - 1 : -1) : y - 1;
+      const yd = y === rows - 1 ? (wrap ? 0 : -1) : y + 1;
+      for (let x = 0; x < cols; x++) {
+        const xl = x === 0 ? (wrap ? cols - 1 : -1) : x - 1;
+        const xr = x === cols - 1 ? (wrap ? 0 : -1) : x + 1;
+        let n = 0;
+        if (yu >= 0) { if (xl >= 0) n += grid[yu * cols + xl]; n += grid[yu * cols + x]; if (xr >= 0) n += grid[yu * cols + xr]; }
+        if (xl >= 0) n += grid[y * cols + xl];
+        if (xr >= 0) n += grid[y * cols + xr];
+        if (yd >= 0) { if (xl >= 0) n += grid[yd * cols + xl]; n += grid[yd * cols + x]; if (xr >= 0) n += grid[yd * cols + xr]; }
+        const i = y * cols + x;
+        const alive = grid[i] ? ((sMask >> n) & 1) : ((bMask >> n) & 1);
+        next[i] = alive; pop += alive;
+        age[i] = alive ? Math.min(255, age[i] + 1) : (age[i] ? Math.max(0, age[i] - 24) : 0);
+      }
+    }
+    [grid, next] = [next, grid];
+    population = pop;
+  }
+
+  function stepBrain() {
+    // states: 0 off, 1 firing, 2 refractory. Birth when exactly 2 firing neighbours.
+    const wrap = ui.wrap.checked;
+    let pop = 0;
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      const i = y * cols + x, s = grid[i];
+      if (s === 1) { next[i] = 2; }
+      else if (s === 2) { next[i] = 0; }
+      else {
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          let nx = x + dx, ny = y + dy;
+          if (wrap) { nx = (nx + cols) % cols; ny = (ny + rows) % rows; }
+          else if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+          if (grid[ny * cols + nx] === 1) n++;
+        }
+        next[i] = n === 2 ? 1 : 0;
+      }
+      if (next[i] === 1) pop++;
+    }
+    [grid, next] = [next, grid];
+    population = pop;
+  }
+
+  function stepElementary() {
+    // Writes the next row below the current one; scrolls when the bottom is reached.
+    const rule = clampRule(+ui.ruleNum.value);
+    const wrap = ui.wrap.checked;
+    if (elemRow >= rows - 1) {
+      grid.copyWithin(0, cols);              // scroll up one row
+      grid.fill(0, (rows - 1) * cols);
+      elemRow = rows - 2;
+    }
+    const src = elemRow * cols, dst = (elemRow + 1) * cols;
+    let pop = 0;
+    for (let x = 0; x < cols; x++) {
+      const l = x === 0 ? (wrap ? grid[src + cols - 1] : 0) : grid[src + x - 1];
+      const c = grid[src + x];
+      const r = x === cols - 1 ? (wrap ? grid[src] : 0) : grid[src + x + 1];
+      const v = (rule >> ((l << 2) | (c << 1) | r)) & 1;
+      grid[dst + x] = v; pop += v;
+    }
+    elemRow++;
+    population = pop;
+  }
+
+  function step() {
+    const mode = ui.rule.value;
+    if (mode === 'elem') stepElementary();
+    else if (mode === 'brain') stepBrain();
+    else stepMoore();
+    generation++;
+    updateStats();
+  }
+
+  function clampRule(n) { return Math.max(0, Math.min(255, isFinite(n) ? n | 0 : 30)); }
+
+  // ---------- drawing ----------
+  function draw() {
+    const w = canvas.width, h = canvas.height, s = cell * dpr;
+    ctx.fillStyle = colors.bg; ctx.fillRect(0, 0, w, h);
+    const trails = ui.trails.checked && ui.rule.value !== 'elem' && ui.rule.value !== 'brain';
+    const gap = cell >= 5 ? dpr : 0;
+    if (ui.rule.value === 'brain') {
+      ctx.fillStyle = colors.cell;
+      for (let i = 0; i < grid.length; i++) if (grid[i] === 1) ctx.fillRect((i % cols) * s, ((i / cols) | 0) * s, s - gap, s - gap);
+      ctx.fillStyle = colors.dying;
+      for (let i = 0; i < grid.length; i++) if (grid[i] === 2) ctx.fillRect((i % cols) * s, ((i / cols) | 0) * s, s - gap, s - gap);
+      return;
+    }
+    if (trails) {
+      for (let i = 0; i < grid.length; i++) {
+        if (grid[i]) { ctx.fillStyle = colors.cell; ctx.globalAlpha = 1; }
+        else if (age[i]) { ctx.fillStyle = colors.dying; ctx.globalAlpha = age[i] / 255; }
+        else continue;
+        ctx.fillRect((i % cols) * s, ((i / cols) | 0) * s, s - gap, s - gap);
+      }
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = colors.cell;
+      for (let i = 0; i < grid.length; i++) if (grid[i]) ctx.fillRect((i % cols) * s, ((i / cols) | 0) * s, s - gap, s - gap);
+    }
+  }
+
+  function updateStats() { ui.gen.textContent = generation; ui.pop.textContent = population; }
+
+  function countPop() {
+    let p = 0; const brain = ui.rule.value === 'brain';
+    for (let i = 0; i < grid.length; i++) p += brain ? (grid[i] === 1) : grid[i];
+    population = p; updateStats();
+  }
+
+  // ---------- loop ----------
+  function loop(t) {
+    if (!running) return;
+    const interval = 1000 / +ui.speed.value;
+    acc += t - last; last = t;
+    let did = false;
+    while (acc >= interval) { step(); acc -= interval; did = true; if (acc > interval * 5) acc = 0; }
+    if (did) draw();
+    frames++; if (t - fpsT > 1000) { ui.fps.textContent = ''; frames = 0; fpsT = t; }
+    requestAnimationFrame(loop);
+  }
+  function setRunning(v) {
+    running = v; ui.play.textContent = v ? 'Pause' : 'Play';
+    if (v) { last = performance.now(); acc = 0; requestAnimationFrame(loop); }
+  }
+
+  // ---------- actions ----------
+  function clear() { grid.fill(0); age.fill(0); generation = 0; elemRow = 0; countPop(); draw(); }
+  function randomize(density = 0.3) {
+    generation = 0; age.fill(0);
+    if (ui.rule.value === 'elem') { grid.fill(0); elemRow = 0; for (let x = 0; x < cols; x++) grid[x] = Math.random() < 0.5 ? 1 : 0; }
+    else for (let i = 0; i < grid.length; i++) grid[i] = Math.random() < density ? 1 : 0;
+    countPop(); draw();
+  }
+  function placePreset(name) {
+    const p = PRESETS[name]; if (!p) return;
+    if (ui.rule.value === 'elem') { grid.fill(0); elemRow = 0; grid[(cols / 2) | 0] = 1; generation = 0; countPop(); draw(); return; }
+    const ph = p.length, pw = p[0].length;
+    const ox = Math.max(0, ((cols - pw) / 2) | 0), oy = Math.max(0, ((rows - ph) / 2) | 0);
+    for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) {
+      const tx = ox + x, ty = oy + y;
+      if (tx < cols && ty < rows && p[y][x] === '1') grid[ty * cols + tx] = 1;
+    }
+    countPop(); draw();
+  }
+
+  // ---------- rule UI ----------
+  function buildRuleBits() {
+    ui.rulebits.innerHTML = '';
+    for (let b = 7; b >= 0; b--) {
+      const d = document.createElement('div'); d.className = 'bit'; d.dataset.bit = b;
+      d.title = `pattern ${b.toString(2).padStart(3, '0')}`;
+      d.textContent = b.toString(2).padStart(3, '0').replace(/0/g, '·').replace(/1/g, '█').slice(0, 3);
+      d.addEventListener('click', () => { ui.ruleNum.value = clampRule(+ui.ruleNum.value) ^ (1 << b); syncRuleBits(); if (ui.rule.value === 'elem') restartElem(); });
+      ui.rulebits.appendChild(d);
+    }
+    syncRuleBits();
+  }
+  function syncRuleBits() {
+    const r = clampRule(+ui.ruleNum.value);
+    ui.rulebits.querySelectorAll('.bit').forEach(d => d.classList.toggle('on', (r >> +d.dataset.bit) & 1));
+  }
+  function restartElem() { grid.fill(0); age.fill(0); elemRow = 0; generation = 0; grid[(cols / 2) | 0] = 1; countPop(); draw(); }
+  function onRuleChange() {
+    const elem = ui.rule.value === 'elem';
+    ui.elemGroup.style.display = elem ? 'flex' : 'none';
+    ui.rulebits.classList.toggle('show', elem && window.innerWidth > 720);
+    ui.preset.disabled = elem;
+    const name = ui.rule.options[ui.rule.selectedIndex].text;
+    ui.title.textContent = elem ? `Elementary rule ${clampRule(+ui.ruleNum.value)}` : name;
+    if (elem) restartElem(); else { generation = 0; age.fill(0); for (let i = 0; i < grid.length; i++) if (grid[i] > 1) grid[i] = 1; countPop(); draw(); }
+  }
+
+  // ---------- pointer drawing ----------
+  let drawing = false, drawValue = 1, lastCell = -1;
+  function cellAt(e) {
+    const r = canvas.getBoundingClientRect();
+    const x = Math.floor((e.clientX - r.left) / cell), y = Math.floor((e.clientY - r.top) / cell);
+    if (x < 0 || y < 0 || x >= cols || y >= rows) return -1;
+    return y * cols + x;
+  }
+  canvas.addEventListener('pointerdown', e => {
+    const i = cellAt(e); if (i < 0) return;
+    canvas.setPointerCapture(e.pointerId);
+    drawing = true; drawValue = grid[i] === 1 ? 0 : 1;
+    if (ui.rule.value === 'elem') { grid.fill(0); elemRow = Math.floor(i / cols); generation = 0; grid.fill(0, elemRow * cols, (elemRow + 1) * cols); }
+    grid[i] = drawValue; lastCell = i; countPop(); draw();
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!drawing) return;
+    const i = cellAt(e); if (i < 0 || i === lastCell) return;
+    if (ui.rule.value === 'elem' && Math.floor(i / cols) !== elemRow) return;
+    grid[i] = drawValue; lastCell = i; countPop(); draw();
+  });
+  const stopDraw = () => { drawing = false; lastCell = -1; };
+  canvas.addEventListener('pointerup', stopDraw); canvas.addEventListener('pointercancel', stopDraw);
+
+  // ---------- wiring ----------
+  ui.play.addEventListener('click', () => setRunning(!running));
+  ui.step.addEventListener('click', () => { step(); draw(); });
+  ui.clear.addEventListener('click', clear);
+  ui.random.addEventListener('click', () => randomize());
+  ui.rule.addEventListener('change', onRuleChange);
+  ui.ruleNum.addEventListener('input', () => { ui.ruleNum.value = clampRule(+ui.ruleNum.value); syncRuleBits(); ui.title.textContent = `Elementary rule ${ui.ruleNum.value}`; restartElem(); });
+  ui.preset.addEventListener('change', () => { placePreset(ui.preset.value); ui.preset.value = ''; });
+  ui.size.addEventListener('input', () => { cell = +ui.size.value; resize(true); });
+  ui.trails.addEventListener('change', draw);
+  window.addEventListener('resize', () => { ui.rulebits.classList.toggle('show', ui.rule.value === 'elem' && window.innerWidth > 720); resize(true); });
+  window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.code === 'Space') { e.preventDefault(); setRunning(!running); }
+    else if (e.key === 'ArrowRight') { step(); draw(); }
+    else if (e.key.toLowerCase() === 'r') randomize();
+    else if (e.key.toLowerCase() === 'c') clear();
+  });
+
+  // ---------- query params (for embeds): ?rule=life&pattern=gun&autoplay=1&speed=20&cell=5&elem=90&theme=light ----------
+  const q = new URLSearchParams(location.search);
+  if (q.get('theme') === 'light' || q.get('theme') === 'dark') document.documentElement.dataset.theme = q.get('theme');
+  readColors();
+  if (q.has('cell')) { ui.size.value = Math.max(2, Math.min(16, +q.get('cell') || 6)); cell = +ui.size.value; }
+  if (q.has('speed')) ui.speed.value = Math.max(1, Math.min(60, +q.get('speed') || 15));
+  if (q.has('rule') && [...ui.rule.options].some(o => o.value === q.get('rule'))) ui.rule.value = q.get('rule');
+  if (q.has('elem')) { ui.rule.value = 'elem'; ui.ruleNum.value = clampRule(+q.get('elem')); }
+  if (q.has('wrap')) ui.wrap.checked = q.get('wrap') !== '0';
+
+  buildRuleBits();
+  resize(false);
+  onRuleChange();
+  if (ui.rule.value !== 'elem') {
+    if (q.has('pattern') && PRESETS[q.get('pattern')]) placePreset(q.get('pattern'));
+    else randomize();
+  }
+  if (q.get('autoplay') === '1') setRunning(true);
+})();
+</script>
+</body>
+</html>
