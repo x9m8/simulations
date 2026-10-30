@@ -1,6 +1,6 @@
 # simulations
 
-Ten physics and math simulations, each a single HTML file with no build step and no dependencies. Open any `index.html` in a browser, or run them live at [apps.x9m8.com](https://apps.x9m8.com/).
+Eight physics and math simulations, each a single HTML file with no build step and no dependencies. Open any `index.html` in a browser, or run them live at [apps.x9m8.com](https://apps.x9m8.com/).
 
 Every simulation accepts URL parameters so a particular state can be linked or embedded. Each one has a short note below on the math it runs and a longer article on [x9m8.com](https://x9m8.com/).
 
