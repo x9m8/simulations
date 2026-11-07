@@ -51,7 +51,7 @@ Reynolds boids with an optional predator. Up to 4,000 agents.
 
 **The math.** Each boid steers by three local rules over its neighbours within a vision radius: separation (push away from anything too close, weighted by 1/distance), alignment (match the average heading), cohesion (move toward the average position). The three steering vectors are scaled by their sliders, summed, clamped to a maximum force, and applied as acceleration; speed is clamped so the flock neither stalls nor explodes. The naive neighbour search is O(N²). The simulator drops each boid into a uniform grid whose cell size equals the vision radius, so a boid only tests the nine cells around it, which is O(N) on average and is what keeps a few thousand boids interactive in plain JavaScript. The predator is a boid that ignores the rules and chases the nearest prey; prey add a fourth, strongly weighted flee vector when it comes within range.
 
-Article: coming soon on x9m8.com.
+Article: <https://x9m8.com/flocking-simulation-boids-starling-murmuration/>
 
 ## Reaction–Diffusion
 
@@ -70,7 +70,7 @@ Gray–Scott patterns on the GPU. Presets: `coral`, `mitosis`, `spots`, `stripes
 
 with `D_A = 1.0`, `D_B = 0.5`. The Laplacian is a 3×3 stencil (centre −1, edges 0.2, corners 0.05) evaluated in a fragment shader; two floating-point textures ping-pong so each pass reads the previous state and writes the next. Several passes run per frame. The whole pattern zoo, spots, stripes, dividing cells, comes from where `(f, k)` sits on Pearson's map; only a thin band of that plane produces anything but uniform grey.
 
-Article: coming soon on x9m8.com.
+Article: <https://x9m8.com/reaction-diffusion-simulator-turing-patterns-gray-scott/>
 
 ## Fluid
 
@@ -82,7 +82,7 @@ Incompressible 2D fluid you can stir. Views: dye, velocity, vorticity, pressure.
 
 **The math.** Jos Stam's Stable Fluids, in WebGL. Each frame: advect velocity through itself (semi-Lagrangian, trace each cell back along the flow and sample there, unconditionally stable), diffuse with a few Jacobi iterations when viscosity is nonzero, add forces from the mouse and from vorticity confinement, then project. Projection is the part that makes it a fluid: solve the Poisson equation `∇²p = ∇·u` for pressure with Jacobi iterations, then subtract `∇p` from the velocity so the field becomes divergence-free. Dye is a separate scalar field advected by the final velocity. Vorticity confinement computes the curl `ω = ∂v/∂x − ∂u/∂y`, takes the normalised gradient of `|ω|`, and pushes the flow along `N × ω` to put back the small swirls that semi-Lagrangian advection smears away.
 
-Article: coming soon on x9m8.com.
+Article: <https://x9m8.com/fluid-simulator-navier-stokes-stable-fluids-browser/>
 
 ## Erosion
 
@@ -94,7 +94,7 @@ Rain carving a fractal-noise terrain into valleys and ridges. Views: shaded reli
 
 **The math.** The terrain starts as several octaves of Perlin noise. Erosion is particle-based, after Hans Beyer's 2015 thesis: each raindrop lands at random, reads the local gradient from bilinear interpolation of the four surrounding cells, and updates its direction as a blend of its previous heading (inertia) and the downhill direction. It moves one cell, and the height difference `Δh` decides what happens. Its carrying capacity is `c = max(−Δh, p_min) · speed · water · c_factor`. Carrying less than that, it erodes up to `(c − sediment) · k_erode` from the cells around it, spread by a radius kernel; carrying more, it deposits `(sediment − c) · k_deposit`. Speed updates from `v² = v² + Δh · g`, water evaporates by a fraction each step, and the drop dies after a fixed lifetime or when it stops. A few hundred thousand drops turn the noise into drainage networks.
 
-Article: coming soon on x9m8.com.
+Article: <https://x9m8.com/erosion-simulator-hydraulic-erosion-terrain-rain/>
 
 ## Cellular Automata
 
